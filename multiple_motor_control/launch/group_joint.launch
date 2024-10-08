@@ -1,0 +1,16 @@
+<launch>
+  <!-- Set the parameters for the robot name, joint number, position, and duration -->
+  <param name="/robot_name" value="go1" />
+  <!-- there are 3 groups 0 : hip
+                          1 : thigh
+                          2 : calf -->
+  <param name="/group_number" value="$(arg group)" />
+  <param name="/joint_angle_position" value="$(arg rad_angle)" />
+    <param name="/duration" value="$(arg duration)" />
+
+
+  <!-- Start the ROS node -->
+  <node name="group_joint" pkg="lloyd_test" type="lloyd_servo"  />
+
+
+</launch>
