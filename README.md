@@ -13,6 +13,7 @@
     #include <vector>
     #include <string>
     #include <cmath>
+    #include <iostream>
     
     using namespace UNITREE_LEGGED_SDK;
     
@@ -45,15 +46,51 @@
                    lowState.motorState[FR_0].q, lowState.motorState[FR_0].dq,
                    lowState.motorState[FR_0].tauEst, lowState.motorState[FR_1].q);
     
-            // Trajectory control
-            if (motiontime > 10 && !trajectoryStarted)
+            // Initial stand and wait for user input
+            if (motiontime == 10)
             {
+                stand();
+                std::cout << "Robot is in standing position. Press Enter to start the trajectory motion..." << std::endl;
+                std::cin.get();
                 trajectoryStarted = true;
+            }
+    
+            // Trajectory control
+            if (trajectoryStarted && !trajectoryFinished)
+            {
                 startTrajectory();
             }
     
             // Send command to robot
             udp.SetSend(lowCmd);
+        }
+    
+        void stand()
+        {
+            double pos[12] = {0.0, 0.67, -1.3, -0.0, 0.67, -1.3, 
+                              0.0, 0.67, -1.3, -0.0, 0.67, -1.3};
+            moveAllPosition(pos, 2000);
+        }
+    
+        void moveAllPosition(double* targetPos, double duration)
+        {
+            double pos[12], lastPos[12], percent;
+            for(int j=0; j<12; j++) lastPos[j] = lowState.motorState[j].q;
+            for(int i=1; i<=duration; i++){
+                if(!ros::ok()) break;
+                percent = (double)i/duration;
+                for(int j=0; j<12; j++){
+                    pos[j] = lastPos[j]*(1-percent) + targetPos[j]*percent;
+                    lowCmd.motorCmd[j].q = pos[j];
+                    lowCmd.motorCmd[j].Kp = 5;
+                    lowCmd.motorCmd[j].dq = 0;
+                    lowCmd.motorCmd[j].Kd = 1;
+                    lowCmd.motorCmd[j].tau = 0;
+                }
+                udp.SetSend(lowCmd);
+                udp.Send();
+                usleep(1000);
+            }
         }
     
         void startTrajectory()
@@ -66,6 +103,7 @@
             if (loadTrajectoryVel(filename, positions, velocities, durations))
             {
                 moveAllPosVelInt(positions, velocities, durations);
+                trajectoryFinished = true;
             }
             else
             {
@@ -137,6 +175,11 @@
                 return;
             }
     
+            double lastPos[12];
+            for (int j = 0; j < 12; j++) {
+                lastPos[j] = lowState.motorState[j].q;
+            }
+    
             for (size_t step = 0; step < trajectories.size(); step++) {
                 const auto& targetPos = trajectories[step];
                 const auto& targetVel = velocities[step];
@@ -150,8 +193,14 @@
                     percent = std::min(1.0, std::max(0.0, percent));  // Clamp between 0 and 1
     
                     for (int j = 0; j < 12; j++) {
-                        lowCmd.motorCmd[j].q = targetPos[j];
-                        lowCmd.motorCmd[j].dq = targetVel[j];
+                        // Interpolate position
+                        lowCmd.motorCmd[j].q = lastPos[j] * (1 - percent) + targetPos[j] * percent;
+                        
+                        // Interpolate velocity
+                        double startVel = (step > 0) ? velocities[step-1][j] : 0;
+                        lowCmd.motorCmd[j].dq = startVel * (1 - percent) + targetVel[j] * percent;
+    
+                        // Set control parameters
                         lowCmd.motorCmd[j].Kp = 5;
                         lowCmd.motorCmd[j].Kd = 1;
                         lowCmd.motorCmd[j].tau = 0;
@@ -160,6 +209,11 @@
                     udp.SetSend(lowCmd);
                     udp.Send();
                     usleep(1000);  // Sleep for 1ms
+                }
+    
+                // Update lastPos for the next step
+                for (int j = 0; j < 12; j++) {
+                    lastPos[j] = targetPos[j];
                 }
             }
         }
@@ -170,6 +224,7 @@
         LowState lowState = {0};
         int motiontime = 0;
         bool trajectoryStarted = false;
+        bool trajectoryFinished = false;
     };
     
     int main(int argc, char *argv[])
@@ -215,40 +270,20 @@
             initCommand();
         }
     
-        bool loadTrajectoryVel(const std::string& filename, std::vector<std::vector<double>>& trajectory) {
-            std::ifstream file(filename);
-            if (!file.is_open()) {
-                std::cerr << "Failed to open file: " << filename << std::endl;
-                return false;
-            }
-    
-            std::string line;
-            while (std::getline(file, line)) {
-                std::istringstream iss(line);
-                std::vector<double> row;
-                std::string value;
-                while (std::getline(iss, value, ',')) {
-                    row.push_back(std::stod(value));
-                }
-                trajectory.push_back(row);
-            }
-            return true;
+        void stand() {   
+            double pos[12] = {0.0, 0.67, -1.3, -0.0, 0.67, -1.3, 
+                              0.0, 0.67, -1.3, -0.0, 0.67, -1.3};
+            moveAllPosition(pos, 2*1000);
         }
     
-        void moveAllPosInt(const std::vector<double>& targetPos, double duration) {
-            std::vector<double> lastPos(12);
-            for (int j = 0; j < 12; j++) {
-                lastPos[j] = low_state.motorState[j].q;
-            }
-    
-            for (int i = 1; i <= duration; i++) {
-                double percent = static_cast<double>(i) / duration;
-                for (int j = 0; j < 12; j++) {
-                    low_cmd.motorCmd[j].q = lastPos[j] * (1 - percent) + targetPos[j] * percent;
-                    low_cmd.motorCmd[j].dq = 0;
-                    low_cmd.motorCmd[j].Kp = 5.0;
-                    low_cmd.motorCmd[j].Kd = 1.0;
-                    low_cmd.motorCmd[j].tau = 0;
+        void moveAllPosition(double* targetPos, double duration) {
+            double pos[12], lastPos[12], percent;
+            for(int j=0; j<12; j++) lastPos[j] = low_state.motorState[j].q;
+            for(int i=1; i<=duration; i++){
+                if(!ros::ok()) break;
+                percent = (double)i/duration;
+                for(int j=0; j<12; j++){
+                    low_cmd.motorCmd[j].q = lastPos[j]*(1-percent) + targetPos[j]*percent; 
                 }
                 sendCommand();
                 ros::spinOnce();
@@ -256,18 +291,130 @@
             }
         }
     
-        void run() {
-            std::vector<std::vector<double>> trajectory;
-            if (!loadTrajectoryVel("path_to_your_csv_file.csv", trajectory)) {
+        bool loadTrajectoryVel(const std::string& filename, 
+                               std::vector<std::vector<double>>& positions,
+                               std::vector<std::vector<double>>& velocities,
+                               std::vector<double>& durations) {
+            std::ifstream file(filename);
+            if (!file.is_open()) {
+                ROS_ERROR("Could not open file: %s", filename.c_str());
+                return false;
+            }
+    
+            std::string line;
+            while (std::getline(file, line)) {
+                std::stringstream ss(line);
+                std::vector<double> position_values;
+                std::vector<double> velocity_values;
+                std::string value;
+    
+                // Read 12 position values
+                for (int i = 0; i < 12; i++) {
+                    if (!std::getline(ss, value, ',')) {
+                        ROS_ERROR("Invalid line in trajectory file");
+                        return false;
+                    }
+                    position_values.push_back(-1*(std::stod(value)));
+                }
+    
+                // Read duration
+                if (!std::getline(ss, value, ',')) {
+                    ROS_ERROR("Invalid line in trajectory file");
+                    return false;
+                }
+                double duration = std::stod(value);
+    
+                // Read 12 velocity values
+                for (int i = 0; i < 12; i++) {
+                    if (!std::getline(ss, value, ',')) {
+                        ROS_ERROR("Invalid line in trajectory file");
+                        return false;
+                    }
+                    velocity_values.push_back(-1*(std::stod(value)));
+                }
+    
+                positions.push_back(position_values);
+                velocities.push_back(velocity_values);
+                durations.push_back(duration);
+            }
+    
+            return true;
+        }
+    
+        void moveAllPosVelInt(const std::vector<std::vector<double>>& trajectories,
+                              const std::vector<std::vector<double>>& velocities,
+                              const std::vector<double>& durations) {
+            if (trajectories.empty() || trajectories[0].size() != 12 || 
+                velocities.empty() || velocities[0].size() != 12 || 
+                trajectories.size() != velocities.size() || 
+                trajectories.size() != durations.size()) {
+                ROS_ERROR("Invalid trajectory data");
                 return;
             }
     
-            std::cout << "Trajectory loaded. Press Enter to start the jump..." << std::endl;
+            double lastPos[12];
+            for (int j = 0; j < 12; j++) {
+                lastPos[j] = low_state.motorState[j].q;
+            }
+    
+            for (size_t step = 0; step < trajectories.size(); step++) {
+                const auto& targetPos = trajectories[step];
+                const auto& targetVel = velocities[step];
+                double duration = durations[step];
+    
+                double start_time = ros::Time::now().toSec();
+                double end_time = start_time + duration;
+    
+                while (ros::Time::now().toSec() < end_time) {
+                    if (!ros::ok()) return;
+    
+                    double percent = (ros::Time::now().toSec() - start_time) / duration;
+                    percent = std::min(1.0, std::max(0.0, percent));  // Clamp between 0 and 1
+    
+                    for (int j = 0; j < 12; j++) {
+                        // Interpolate position
+                        low_cmd.motorCmd[j].q = lastPos[j] * (1 - percent) + targetPos[j] * percent;
+                        
+                        // Interpolate velocity
+                        double startVel = (step > 0) ? velocities[step-1][j] : 0;
+                        low_cmd.motorCmd[j].dq = startVel * (1 - percent) + targetVel[j] * percent;
+    
+                        // Set control parameters
+                        low_cmd.motorCmd[j].Kp = 100;  // Adjust as needed
+                        low_cmd.motorCmd[j].Kd = 4;  // Adjust as needed
+                        low_cmd.motorCmd[j].tau = 0; // Set to 0 for position/velocity control
+                    }
+    
+                    sendCommand();
+                    ros::spinOnce();
+                    loop_rate.sleep();
+                }
+    
+                // Update lastPos for the next step
+                for (int j = 0; j < 12; j++) {
+                    lastPos[j] = targetPos[j];
+                }
+            }
+            for (int j = 0; j < 12; j++) {
+                low_cmd.motorCmd[j].dq = 0;
+            }
+        }
+    
+        void run() {
+            std::cout << "Making the robot stand. Please wait..." << std::endl;
+            stand();
+            
+            std::vector<std::vector<double>> positions, velocities;
+            std::vector<double> durations;
+            if (!loadTrajectoryVel("/home/ubuntu/Downloads/Trajectories/dq/trajectoryHop11dq.csv", positions, velocities, durations)) {
+                return;
+            }
+    
+            std::cout << "Trajectory loaded. Robot is in standing position." << std::endl;
+            std::cout << "Press Enter to start the jump..." << std::endl;
             std::cin.ignore();
     
-            for (const auto& pos : trajectory) {
-                moveAllPosInt(pos, 10);  // Adjust the duration as needed
-            }
+            moveAllPosVelInt(positions, velocities, durations);
         }
     
     private:
