@@ -1,6 +1,222 @@
 # Marty-Gazebo
 ## ros-to-real
 
+## legged sdk UDP
+
+    #include "unitree_legged_sdk/unitree_legged_sdk.h"
+    #include <math.h>
+    #include <iostream>
+    #include <vector>
+    #include <fstream>
+    #include <sstream>
+    
+    using namespace UNITREE_LEGGED_SDK;
+    
+    class JumpControl
+    {
+    public:
+        JumpControl() : safe(LeggedType::Go1),
+                        udp(LOWLEVEL, 8090, "192.168.123.10", 8007)
+        {
+            udp.InitCmdData(cmd);
+        }
+        void UDPRecv();
+        void UDPSend();
+        void RobotControl();
+        void loadTrajectory();
+        void stand();
+        void moveAllPosition(double* targetPos, double duration);
+        void moveAllPosVelInt();
+    
+        Safety safe;
+        UDP udp;
+        LowCmd cmd = {0};
+        LowState state = {0};
+        int motiontime = 0;
+        float dt = 0.002; // 0.001~0.01
+    
+        std::vector<std::vector<double>> positions;
+        std::vector<std::vector<double>> velocities;
+        std::vector<double> durations;
+        size_t trajectoryIndex = 0;
+        double trajectoryStartTime = 0;
+        bool isStanding = false;
+        bool isJumping = false;
+    };
+    
+    void JumpControl::UDPRecv()
+    {
+        udp.Recv();
+    }
+    
+    void JumpControl::UDPSend()
+    {
+        udp.Send();
+    }
+    
+    void JumpControl::loadTrajectory()
+    {
+        std::string filename = "/home/ubuntu/Downloads/Trajectories/dq/trajectoryHop11dq.csv";
+        std::ifstream file(filename);
+        if (!file.is_open()) {
+            std::cerr << "Could not open file: " << filename << std::endl;
+            return;
+        }
+    
+        std::string line;
+        while (std::getline(file, line)) {
+            std::stringstream ss(line);
+            std::vector<double> position_values;
+            std::vector<double> velocity_values;
+            std::string value;
+    
+            for (int i = 0; i < 12; i++) {
+                std::getline(ss, value, ',');
+                position_values.push_back(-1*(std::stod(value)));
+            }
+    
+            std::getline(ss, value, ',');
+            double duration = std::stod(value);
+    
+            for (int i = 0; i < 12; i++) {
+                std::getline(ss, value, ',');
+                velocity_values.push_back(-1*(std::stod(value)));
+            }
+    
+            positions.push_back(position_values);
+            velocities.push_back(velocity_values);
+            durations.push_back(duration);
+        }
+        std::cout << "Trajectory loaded successfully." << std::endl;
+    }
+    
+    void JumpControl::stand()
+    {
+        double standingPos[12] = {0.0, 0.67, -1.3, -0.0, 0.67, -1.3, 
+                                  0.0, 0.67, -1.3, -0.0, 0.67, -1.3};
+        moveAllPosition(standingPos, 2000);
+    }
+    
+    void JumpControl::moveAllPosition(double* targetPos, double duration)
+    {
+        double startPos[12];
+        for(int j=0; j<12; j++) {
+            startPos[j] = state.motorState[j].q;
+        }
+        double startTime = motiontime * dt;
+        double endTime = startTime + duration * 0.001; // convert to seconds
+    
+        while (motiontime * dt < endTime) {
+            double percent = (motiontime * dt - startTime) / (endTime - startTime);
+            percent = std::min(1.0, std::max(0.0, percent));  // Clamp between 0 and 1
+    
+            for(int j=0; j<12; j++) {
+                cmd.motorCmd[j].q = startPos[j]*(1-percent) + targetPos[j]*percent;
+                cmd.motorCmd[j].dq = 0;
+                cmd.motorCmd[j].Kp = 5;
+                cmd.motorCmd[j].Kd = 1;
+                cmd.motorCmd[j].tau = 0;
+            }
+    
+            udp.SetSend(cmd);
+            udp.Send();
+            udp.Recv();
+            udp.GetRecv(state);
+    
+            motiontime++;
+            usleep(1000);
+        }
+    }
+    
+    void JumpControl::moveAllPosVelInt()
+    {
+        if (trajectoryIndex >= positions.size()) {
+            isJumping = false;
+            return;
+        }
+    
+        double currentTime = motiontime * dt - trajectoryStartTime;
+        double duration = durations[trajectoryIndex];
+    
+        if (currentTime >= duration) {
+            trajectoryIndex++;
+            trajectoryStartTime = motiontime * dt;
+            return;
+        }
+    
+        double percent = currentTime / duration;
+        percent = std::min(1.0, std::max(0.0, percent));  // Clamp between 0 and 1
+    
+        for (int j = 0; j < 12; j++) {
+            double startPos = (trajectoryIndex == 0) ? state.motorState[j].q : positions[trajectoryIndex-1][j];
+            double endPos = positions[trajectoryIndex][j];
+            double startVel = (trajectoryIndex == 0) ? 0 : velocities[trajectoryIndex-1][j];
+            double endVel = velocities[trajectoryIndex][j];
+    
+            cmd.motorCmd[j].q = startPos * (1 - percent) + endPos * percent;
+            cmd.motorCmd[j].dq = startVel * (1 - percent) + endVel * percent;
+            cmd.motorCmd[j].Kp = 100;
+            cmd.motorCmd[j].Kd = 4;
+            cmd.motorCmd[j].tau = 0;
+        }
+    }
+    
+    void JumpControl::RobotControl()
+    {
+        motiontime++;
+        udp.GetRecv(state);
+    
+        // gravity compensation
+        cmd.motorCmd[FR_0].tau = -0.65f;
+        cmd.motorCmd[FL_0].tau = +0.65f;
+        cmd.motorCmd[RR_0].tau = -0.65f;
+        cmd.motorCmd[RL_0].tau = +0.65f;
+    
+        if (!isStanding) {
+            stand();
+            isStanding = true;
+            std::cout << "Robot is now in standing position." << std::endl;
+            std::cout << "Press Enter to start the jump..." << std::endl;
+            std::cin.ignore();
+            isJumping = true;
+            trajectoryStartTime = motiontime * dt;
+        } else if (isJumping) {
+            moveAllPosVelInt();
+        }
+    
+        if (motiontime > 10) {
+            safe.PowerProtect(cmd, state, 1);
+        }
+    
+        udp.SetSend(cmd);
+    }
+    
+    int main(void)
+    {
+        std::cout << "Communication level is set to LOW-level." << std::endl
+                  << "WARNING: Make sure the robot is hung up." << std::endl
+                  << "Press Enter to continue..." << std::endl;
+        std::cin.ignore();
+    
+        JumpControl jumpControl;
+        jumpControl.loadTrajectory();
+    
+        LoopFunc loop_control("control_loop", jumpControl.dt, boost::bind(&JumpControl::RobotControl, &jumpControl));
+        LoopFunc loop_udpSend("udp_send", jumpControl.dt, 3, boost::bind(&JumpControl::UDPSend, &jumpControl));
+        LoopFunc loop_udpRecv("udp_recv", jumpControl.dt, 3, boost::bind(&JumpControl::UDPRecv, &jumpControl));
+    
+        loop_udpSend.start();
+        loop_udpRecv.start();
+        loop_control.start();
+    
+        while (1)
+        {
+            sleep(10);
+        };
+    
+        return 0;
+    }
+
 ## UDP code
 
     #include <ros/ros.h>
