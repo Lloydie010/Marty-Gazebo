@@ -1,6 +1,197 @@
 # Marty-Gazebo
 ## ros-to-real
 
+## UDP code
+
+    #include <ros/ros.h>
+    #include <unitree_legged_msgs/LowCmd.h>
+    #include <unitree_legged_msgs/LowState.h>
+    #include "unitree_legged_sdk/unitree_legged_sdk.h"
+    #include "convert.h"
+    #include <fstream>
+    #include <sstream>
+    #include <vector>
+    #include <string>
+    #include <cmath>
+    
+    using namespace UNITREE_LEGGED_SDK;
+    
+    class TrajectoryControl
+    {
+    public:
+        TrajectoryControl() : safe(LeggedType::Go1), udp(LOWLEVEL)
+        {
+            udp.InitCmdData(lowCmd);
+        }
+    
+        void UDPRecv()
+        {
+            udp.Recv();
+        }
+    
+        void UDPSend()
+        {
+            udp.Send();
+        }
+    
+        void RobotControl() 
+        {
+            motiontime++;
+    
+            udp.GetRecv(lowState);
+            
+            // State
+            printf("[%d] Received %f %f %f %f\n", motiontime, 
+                   lowState.motorState[FR_0].q, lowState.motorState[FR_0].dq,
+                   lowState.motorState[FR_0].tauEst, lowState.motorState[FR_1].q);
+    
+            // Trajectory control
+            if (motiontime > 10 && !trajectoryStarted)
+            {
+                trajectoryStarted = true;
+                startTrajectory();
+            }
+    
+            // Send command to robot
+            udp.SetSend(lowCmd);
+        }
+    
+        void startTrajectory()
+        {
+            std::string filename = "trajectory.csv";  // Update with your CSV file path
+            std::vector<std::vector<double>> positions;
+            std::vector<std::vector<double>> velocities;
+            std::vector<double> durations;
+    
+            if (loadTrajectoryVel(filename, positions, velocities, durations))
+            {
+                moveAllPosVelInt(positions, velocities, durations);
+            }
+            else
+            {
+                ROS_ERROR("Failed to load trajectory file");
+            }
+        }
+    
+    private:
+        bool loadTrajectoryVel(const std::string& filename, 
+                               std::vector<std::vector<double>>& positions,
+                               std::vector<std::vector<double>>& velocities,
+                               std::vector<double>& durations)
+        {
+            std::ifstream file(filename);
+            if (!file.is_open()) {
+                ROS_ERROR("Could not open file: %s", filename.c_str());
+                return false;
+            }
+    
+            std::string line;
+            while (std::getline(file, line)) {
+                std::stringstream ss(line);
+                std::vector<double> position_values;
+                std::vector<double> velocity_values;
+                std::string value;
+    
+                // Read 12 position values
+                for (int i = 0; i < 12; i++) {
+                    if (!std::getline(ss, value, ',')) {
+                        ROS_ERROR("Invalid line in trajectory file");
+                        return false;
+                    }
+                    position_values.push_back(std::stod(value));
+                }
+    
+                // Read duration
+                if (!std::getline(ss, value, ',')) {
+                    ROS_ERROR("Invalid line in trajectory file");
+                    return false;
+                }
+                double duration = std::stod(value);
+    
+                // Read 12 velocity values
+                for (int i = 0; i < 12; i++) {
+                    if (!std::getline(ss, value, ',')) {
+                        ROS_ERROR("Invalid line in trajectory file");
+                        return false;
+                    }
+                    velocity_values.push_back(std::stod(value));
+                }
+    
+                positions.push_back(position_values);
+                velocities.push_back(velocity_values);
+                durations.push_back(duration);
+            }
+    
+            return true;
+        }
+    
+        void moveAllPosVelInt(const std::vector<std::vector<double>>& trajectories,
+                              const std::vector<std::vector<double>>& velocities,
+                              const std::vector<double>& durations)
+        {
+            if (trajectories.empty() || trajectories[0].size() != 12 || 
+                velocities.empty() || velocities[0].size() != 12 || 
+                trajectories.size() != velocities.size() || 
+                trajectories.size() != durations.size()) {
+                ROS_ERROR("Invalid trajectory data");
+                return;
+            }
+    
+            for (size_t step = 0; step < trajectories.size(); step++) {
+                const auto& targetPos = trajectories[step];
+                const auto& targetVel = velocities[step];
+                double duration = durations[step];
+    
+                double start_time = ros::Time::now().toSec();
+                double end_time = start_time + duration;
+    
+                while (ros::Time::now().toSec() < end_time) {
+                    double percent = (ros::Time::now().toSec() - start_time) / duration;
+                    percent = std::min(1.0, std::max(0.0, percent));  // Clamp between 0 and 1
+    
+                    for (int j = 0; j < 12; j++) {
+                        lowCmd.motorCmd[j].q = targetPos[j];
+                        lowCmd.motorCmd[j].dq = targetVel[j];
+                        lowCmd.motorCmd[j].Kp = 5;
+                        lowCmd.motorCmd[j].Kd = 1;
+                        lowCmd.motorCmd[j].tau = 0;
+                    }
+    
+                    udp.SetSend(lowCmd);
+                    udp.Send();
+                    usleep(1000);  // Sleep for 1ms
+                }
+            }
+        }
+    
+        Safety safe;
+        UDP udp;
+        LowCmd lowCmd = {0};
+        LowState lowState = {0};
+        int motiontime = 0;
+        bool trajectoryStarted = false;
+    };
+    
+    int main(int argc, char *argv[])
+    {
+        ros::init(argc, argv, "trajectory_control_node");
+        ros::NodeHandle nh;
+    
+        TrajectoryControl controller;
+        ros::Rate loop_rate(500);
+    
+        while (ros::ok())
+        {
+            controller.UDPRecv();
+            controller.RobotControl();
+            controller.UDPSend();
+            ros::spinOnce();
+            loop_rate.sleep();
+        }
+    
+        return 0;
+    }
+
 ## jumpcontrl altogether
 
     #include <ros/ros.h>
