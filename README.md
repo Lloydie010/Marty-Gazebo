@@ -71,6 +71,16 @@
         }
     }
 
+    int main(int argc, char** argv) {
+        ros::init(argc, argv, "jump_control");
+        ros::NodeHandle nh;
+    
+        JumpControl jump_control(nh);
+        jump_control.run();
+    
+        return 0;
+    }
+
 ## launch
 
     <launch>
