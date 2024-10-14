@@ -6,6 +6,8 @@
 #include <sstream>
 #include <stdio.h>
 #include <stdint.h>
+#include <string>
+#include <stdexcept>
 
 using namespace UNITREE_LEGGED_SDK;
 
@@ -23,6 +25,7 @@ public:
     void loadTrajectory();
     void moveAllPosition(double* targetPos, double duration);
     void moveAllPosVelInt(double initDuration);
+    void writeToCSV(const std::string& filename, const std::vector<std::vector<float>>& data);
 
     Safety safe;
     UDP udp;
@@ -34,6 +37,7 @@ public:
     std::vector<std::vector<double>> positions;
     std::vector<std::vector<double>> velocities;
     std::vector<double> durations;
+    std::vector<std::vector<float>> data; //FR, FL positions, velocities, imu angle, accelleration, feet position
     double controlPos[12];
     int startTime = 0;
     int trajectoryIndex = 0;
@@ -59,9 +63,29 @@ void JumpControl::UDPSend()
     udp.Send();
 }
 
+void JumpControl::writeToCSV(const std::string& filename, const std::vector<std::vector<float>>& data) {
+    std::ofstream file(filename);
+    
+    if (!file.is_open()) {
+        throw std::runtime_error("Could not open file");
+    }
+    
+    for (const auto& row : data) {
+        for (size_t i = 0; i < row.size(); ++i) {
+            file << row[i];
+            if (i < row.size() - 1) {
+                file << ",";
+            }
+        }
+        file << "\n";
+    }
+    
+    file.close();
+}
+
 void JumpControl::loadTrajectory()
 {
-    std::string filename = "/home/ubuntu/Downloads/Trajectories/dq/trajectoryHop6dq.csv";
+    std::string filename = "/home/ubuntu/Downloads/Trajectories/dq/trajectoryHop20dq.csv";
     std::ifstream file(filename);
     if (!file.is_open()) {
         std::cerr << "Could not open file: " << filename << std::endl;
@@ -183,11 +207,12 @@ void JumpControl::moveAllPosVelInt(double initDuration)
             double endPos = positions[trajectoryIndex][j];
             double startVel = (trajectoryIndex == 0) ? 0 : velocities[trajectoryIndex-1][j];
             double endVel = velocities[trajectoryIndex][j];
-            cout << "MOTOT:" << j << endl;
+            cout << "MOTOR:" << j << endl;
             cout << "POS:" << (startPos * (1 - percent) + endPos * percent) << endl;
             cout << "VEL:" << (startVel * (1 - percent) + endVel * percent) << endl;
             cmd.motorCmd[j].q = startPos * (1 - percent) + endPos * percent;
-            cmd.motorCmd[j].dq = startVel * (1 - percent) + endVel * percent;
+            // cmd.motorCmd[j].dq = startVel * (1 - percent) + endVel * percent;
+            // cmd.motorCmd[j].dq = 0;
             cmd.motorCmd[j].Kp = 100;
             cmd.motorCmd[j].Kd = 4;
             // cmd.motorCmd[j].tau = 0;
@@ -195,6 +220,15 @@ void JumpControl::moveAllPosVelInt(double initDuration)
 
     }
     if (motionTime >= endTime) {
+
+        std::vector<float> row = {state.motorState[1].q, state.motorState[2].q, state.motorState[7].q, state.motorState[8].q, 
+                                state.motorState[1].dq, state.motorState[2].dq, state.motorState[7].dq, state.motorState[8].dq, 
+                                state.motorState[1].tauEst, state.motorState[2].tauEst,state.motorState[7].tauEst, state.motorState[8].tauEst, 
+                                state.imu.accelerometer[0], state.imu.accelerometer[1], state.imu.accelerometer[2], 
+                                state.imu.quaternion[0], state.imu.quaternion[1], state.imu.quaternion[2], state.imu.quaternion[3], 
+                                state.imu.rpy[0], (float)state.footForce[0], (float)state.footForce[2], (float)durations[trajectoryIndex]};
+        data.push_back(row);
+
         trajectoryIndex++;
         cout << "NEXT TRAJECTORY" << endl;
         if (trajectoryIndex == positions.size())
@@ -204,6 +238,7 @@ void JumpControl::moveAllPosVelInt(double initDuration)
             // for (int j = 0; j < 12; j++) {
             //     cmd.motorCmd[j].dq = 0;
             // }
+            writeToCSV("/home/ubuntu/Documents/SensorDataGo1/Hop20gnh.csv", data);
         }
     }
 }
@@ -269,7 +304,7 @@ void JumpControl::RobotControl()
                 std::cout << "Press Enter to start the jump..." << std::endl;
                 std::cin.ignore();
             }
-            moveAllPosVelInt(0.5);
+            moveAllPosVelInt(0.3);
         } else if (!isLowered) {
             if (!motionStarted)
             {
@@ -327,7 +362,7 @@ void JumpControl::RobotControl()
 
     if (motionTime > 10) {
         safe.PositionLimit(cmd);
-        int res1 = safe.PowerProtect(cmd, state, 6);
+        int res1 = safe.PowerProtect(cmd, state, 7);
         // You can uncomment it for position protection
         // int res2 = safe.PositionProtect(cmd, state, 10);
         // cout << res1 << endl;
