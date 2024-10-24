@@ -15,3 +15,7 @@ Directory with code for implementing motor control on Go1 Gazebo simulation
 ## jump_test.cpp
 
 ROS C++ code for trajectory implementation on physical robot, ran using Unitree_Legged_SDK
+
+## trajPlotting.ipynb
+
+Creating useful plots for visualization of trajectory input data and sensor data from csv files
