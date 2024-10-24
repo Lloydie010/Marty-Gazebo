@@ -1,4 +1,4 @@
-# ROS C++ code for Go1 interfacing in simulation and physical implementation
+# ROS implementation Go1 interfacing in simulation and physical implementation and data
 
 ## Gazebo Vids
 
