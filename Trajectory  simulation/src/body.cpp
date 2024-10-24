@@ -16,8 +16,6 @@ ros::Publisher servo_pub[12];
 unitree_legged_msgs::LowCmd lowCmd;
 unitree_legged_msgs::LowState lowState;
 
-// These parameters are only for reference.
-// Actual patameters need to be debugged if you want to run on real robot.
 void paramInit()
 {
     for(int i=0; i<4; i++){
@@ -62,91 +60,6 @@ void sendServoCmd()
     }
     ros::spinOnce();
     usleep(1000);
-}
-void move_groups(int group_number, double position, double duration)
-{
-    paramInit();
-
-    double pos[12], lastPos[12], percent;
-    for (int j = 0; j < 12; j++)
-        lastPos[j] = lowState.motorState[j].q;
-
-    std::vector<std::thread> threads;
-
-    for (int i = 1; i <= duration; i++) {
-        if (!ros::ok())
-            break;
-
-        percent = static_cast<double>(i) / duration;
-
-        if (group_number == 0) {
-            threads.emplace_back([&lastPos, &position, &percent]() {
-                lowCmd.motorCmd[0].q = lastPos[0] * (1 - percent) + position * percent;
-                lowCmd.motorCmd[3].q = lastPos[3] * (1 - percent) + position * percent;
-                lowCmd.motorCmd[6].q = lastPos[6] * (1 - percent) + position * percent;
-                lowCmd.motorCmd[9].q = lastPos[9] * (1 - percent) + position * percent;
-            });
-        } else if (group_number == 1) {
-            threads.emplace_back([&lastPos, &position, &percent]() {
-                lowCmd.motorCmd[1].q = lastPos[1] * (1 - percent) + position * percent;
-                lowCmd.motorCmd[4].q = lastPos[4] * (1 - percent) + position * percent;
-                lowCmd.motorCmd[7].q = lastPos[7] * (1 - percent) + position * percent;
-                lowCmd.motorCmd[10].q = lastPos[10] * (1 - percent) + position * percent;
-            });
-        } else if (group_number == 2) {
-            threads.emplace_back([&lastPos, &position, &percent]() {
-                lowCmd.motorCmd[2].q = lastPos[2] * (1 - percent) + position * percent;
-                lowCmd.motorCmd[5].q = lastPos[5] * (1 - percent) + position * percent;
-                lowCmd.motorCmd[8].q = lastPos[8] * (1 - percent) + position * percent;
-                lowCmd.motorCmd[11].q = lastPos[11] * (1 - percent) + position * percent;
-            });
-        }
-
-        sendServoCmd();
-    }
-
-    // Wait for all threads to finish
-    for (auto& thread : threads) {
-        thread.join();
-    }
-}
-
-void move_groups1(int group_number,double position, double duration)
-{   
-    paramInit();
-
-    double pos[12] ,lastPos[12], percent;
-    for(int j=0; j<12; j++) lastPos[j] = lowState.motorState[j].q;
-     for(int i=1; i<=duration; i++){
-        if(!ros::ok()) break;
-        percent = (double)i/duration;
-        //group 0 will have the following items 0
-                                           //   3
-                                           //   6
-                                           //   9
- 
-        if(group_number==0){
-            lowCmd.motorCmd[0].q = lastPos[0]*(1-percent) + position*percent;
-            lowCmd.motorCmd[3].q = lastPos[3]*(1-percent) + position*percent;
-            lowCmd.motorCmd[6].q = lastPos[6]*(1-percent) + position*percent;
-            lowCmd.motorCmd[9].q = lastPos[9]*(1-percent) + position*percent;                
-            
-        }
-        if(group_number==1){
-            lowCmd.motorCmd[1].q = lastPos[1]*(1-percent) + position*percent;
-            lowCmd.motorCmd[4].q = lastPos[4]*(1-percent) + position*percent;
-            lowCmd.motorCmd[7].q = lastPos[7]*(1-percent) + position*percent;
-            lowCmd.motorCmd[10].q = lastPos[10]*(1-percent) + position*percent; 
-        }
-        if(group_number==2){
-            lowCmd.motorCmd[2].q = lastPos[2]*(1-percent) + position*percent;
-            lowCmd.motorCmd[5].q = lastPos[5]*(1-percent) + position*percent;
-            lowCmd.motorCmd[8].q = lastPos[8]*(1-percent) + position*percent;
-            lowCmd.motorCmd[11].q = lastPos[11]*(1-percent) + position*percent; 
-        }
-        
-        sendServoCmd();
-    }
 }
 
 void moveAllPosition(double* targetPos, double duration)

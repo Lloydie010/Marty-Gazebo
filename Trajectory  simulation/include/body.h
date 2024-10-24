@@ -22,7 +22,6 @@ extern unitree_legged_msgs::LowState lowState;
 
 void stand();
 void motion_init();
-void move_groups(int group_number,double position, double duration );
 void sendServoCmd();
 void moveAllPosition(double* jointPositions, double duration);
 bool loadTrajectoryFromFile(const std::string& filename, std::vector<std::vector<double>>& trajectories, std::vector<double>& durations);
